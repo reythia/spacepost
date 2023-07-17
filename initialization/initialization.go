@@ -289,7 +289,7 @@ func (init *Initializer) Initialize(ctx context.Context) error {
 
 	if init.nonce.Load() != nil {
 		return nil
-	}s
+	}
 
 	init.logger.Info("initialization: no nonce found while computing labels, continue initializing")
 
