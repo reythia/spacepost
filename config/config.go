@@ -19,7 +19,7 @@ const (
 
 	MinBitsPerLabel = 1
 	MaxBitsPerLabel = 256
-	BitsPerLabel    = 8 * 16
+	BitsPerLabel    = 8 * postrs.LabelLength
 
 	KiB = 1024
 	MiB = 1024 * KiB
@@ -231,6 +231,10 @@ func Validate(cfg Config, opts InitOpts) error {
 	if res := shared.Uint64MulOverflow(numLabels, uint64(cfg.K1)); res {
 		return fmt.Errorf("uint64 overflow: `cfg.LabelsPerUnit` * `opts.NumUnits` (%v) * `cfg.K1` (%v) exceeds the range allowed by uint64",
 			numLabels, cfg.K1)
+	}
+
+	if err := opts.Scrypt.Validate(); err != nil {
+		return err
 	}
 
 	return nil
