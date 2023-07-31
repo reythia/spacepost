@@ -169,13 +169,15 @@ type Initializer struct {
 	cfg  Config
 	opts InitOpts
 
-	nonceValue   []byte
-	nonce        atomic.Pointer[uint64]
-	lastPosition atomic.Pointer[uint64]
-
+	// these values are atomics so they can be read from multiple other goroutines safely
+	// write is protected by mtx
+	nonceValue       atomic.Pointer[[]byte]
+	nonce            atomic.Pointer[uint64]
+	lastPosition     atomic.Pointer[uint64]
 	numLabelsWritten atomic.Uint64
-	diskState        *DiskState
-	mtx              sync.RWMutex
+
+	diskState *DiskState
+	mtx       sync.RWMutex // TODO(mafa): instead of a RWMutex we should lock with a lock file to prevent other processes from initializing/modifying the data
 
 	logger            *Logger
 	referenceOracle   *oracle.WorkOracle
@@ -226,6 +228,37 @@ func NewInitializer(opts ...OptionFunc) (*Initializer, error) {
 		}
 		init.nonce.Store(m.Nonce)
 		init.lastPosition.Store(m.LastPosition)
+
+		switch {
+		case m.NonceValue != nil:
+			// there is already a nonce value in the metadata
+			nonceValue := make([]byte, postrs.LabelLength)
+			copy(nonceValue, m.NonceValue)
+			init.nonceValue.Store(&nonceValue)
+		case m.Nonce != nil:
+			// there is a nonce in the metadata but no nonce value
+			wo, err := oracle.New(
+				oracle.WithProviderID(CPUProviderID()),
+				oracle.WithCommitment(init.commitment),
+				oracle.WithVRFDifficulty(make([]byte, 32)), // we are not looking for it, so set difficulty to 0
+				oracle.WithScryptParams(init.opts.Scrypt),
+				oracle.WithLogger(init.logger),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create work oracle: %w", err)
+			}
+			defer wo.Close()
+
+			result, err := wo.Position(*m.Nonce)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compute nonce value: %w", err)
+			}
+			nonceValue := make([]byte, postrs.LabelLength)
+			copy(nonceValue, result.Output)
+			init.nonceValue.Store(&nonceValue)
+		default:
+			// no nonce in the metadata
+		}
 	}
 
 	if err := init.saveMetadata(); err != nil {
@@ -378,7 +411,7 @@ func removeRedundantFiles(cfg config.Config, opts config.InitOpts, logger *zap.L
 	for _, file := range files {
 		name := file.Name()
 		fileIndex, err := shared.ParseFileIndex(name)
-		if err != nil && name != metadataFileName {
+		if err != nil && name != MetadataFileName {
 			logger.Warn("found unrecognized file", zap.String("fileName", name))
 			continue
 		}
@@ -401,6 +434,16 @@ func (init *Initializer) Nonce() *uint64 {
 	return init.nonce.Load()
 }
 
+func (init *Initializer) NonceValue() []byte {
+	if init.nonceValue.Load() == nil {
+		return nil
+	}
+
+	nonceValue := make([]byte, postrs.LabelLength)
+	copy(nonceValue, *init.nonceValue.Load())
+	return nonceValue
+}
+
 func (init *Initializer) Reset() error {
 	if !init.mtx.TryLock() {
 		return ErrCannotResetWhileInitializing
@@ -418,7 +461,7 @@ func (init *Initializer) Reset() error {
 			continue
 		}
 		name := file.Name()
-		if shared.IsInitFile(info) || name == metadataFileName {
+		if shared.IsInitFile(info) || name == MetadataFileName {
 			path := filepath.Join(init.opts.DataDir, name)
 			if err := os.Remove(path); err != nil {
 				return fmt.Errorf("failed to delete file (%v): %w", path, err)
@@ -553,13 +596,13 @@ func (init *Initializer) initFile(ctx context.Context, wo, woReference *oracle.W
 			}
 			init.logger.Debug("initialization: found nonce", fields...)
 
-			if init.nonceValue == nil || bytes.Compare(candidate, init.nonceValue) < 0 {
+			if init.nonceValue.Load() == nil || bytes.Compare(candidate, *init.nonceValue.Load()) < 0 {
 				nonceValue := make([]byte, postrs.LabelLength)
 				copy(nonceValue, candidate)
 
 				init.logger.Info("initialization: found new best nonce", fields...)
-				init.nonceValue = nonceValue
 				init.nonce.Store(res.Nonce)
+				init.nonceValue.Store(&nonceValue)
 				init.saveMetadata()
 			}
 		}
@@ -645,8 +688,10 @@ func (init *Initializer) saveMetadata() error {
 		NumUnits:        init.opts.NumUnits,
 		MaxFileSize:     init.opts.MaxFileSize,
 		Nonce:           init.nonce.Load(),
-		NonceValue:      init.nonceValue,
 		LastPosition:    init.lastPosition.Load(),
+	}
+	if init.nonceValue.Load() != nil {
+		v.NonceValue = *init.nonceValue.Load()
 	}
 	return SaveMetadata(init.opts.DataDir, &v)
 }
