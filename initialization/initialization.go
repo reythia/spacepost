@@ -352,9 +352,6 @@ func (init *Initializer) Initialize(ctx context.Context) error {
 
 	init.logger.Info("initialization: no nonce found while computing labels, continue initializing")
 
-    // Don't block function exit - we don't care about nonces for partial data
-	return nil
-
 	if init.lastPosition.Load() == nil || *init.lastPosition.Load() < numLabels {
 		lastPos := numLabels
 		init.lastPosition.Store(&lastPos)
