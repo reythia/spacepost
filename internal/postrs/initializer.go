@@ -7,11 +7,12 @@ import "C"
 
 import (
 	"errors"
+	"sync"
 )
 
-// gpuMtx is an instance of deviceMutex that can be used to prevent concurrent calls
-// to the same GPU (by ProviderID) from multiple goroutines.
-var gpuMtx deviceMutex
+// gpuMtx is a mutual exclusion lock preventing concurrent access
+// to any GPU device. CPU can still be used concurrently.
+var gpuMtx sync.Mutex
 
 // DeviceClass is an enum for the type of device (CPU or GPU).
 type DeviceClass int
@@ -26,7 +27,7 @@ const (
 // libpostrs returns a list of these structs when calling cGetProviders().
 // Each Provider is an OpenCL platform + Device combination.
 type Provider struct {
-	ID         uint
+	ID         uint32
 	Model      string
 	DeviceType DeviceClass
 }
@@ -130,7 +131,7 @@ func cScryptPositions(init *C.Initializer, opt *option, start, end uint64) ([]by
 }
 
 // cCPUProviderID returns the ID for the (non OpenCL) CPU provider.
-func cCPUProviderID() uint {
+func cCPUProviderID() uint32 {
 	return C.CPU_PROVIDER_ID
 }
 
@@ -150,7 +151,7 @@ func cGetProviders() ([]Provider, error) {
 	}
 
 	for i := uint(0); i < uint(cNumProviders); i++ {
-		providers[i].ID = (uint)(cProviders[i].id)
+		providers[i].ID = (uint32)(cProviders[i].id)
 		providers[i].Model = C.GoString(&cProviders[i].name[0])
 		providers[i].DeviceType = DeviceClass(cProviders[i].class_)
 	}

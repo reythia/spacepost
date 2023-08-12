@@ -21,7 +21,7 @@ func OpenCLProviders() ([]Provider, error) {
 	return cGetProviders()
 }
 
-func CPUProviderID() uint {
+func CPUProviderID() uint32 {
 	return cCPUProviderID()
 }
 
@@ -37,7 +37,7 @@ type Scrypter interface {
 }
 
 type option struct {
-	providerID *uint
+	providerID *uint32
 
 	commitment    []byte
 	n             uint
@@ -66,9 +66,9 @@ func (o *option) validate() error {
 type OptionFunc func(*option) error
 
 // WithProviderID sets the ID of the openCL provider to use.
-func WithProviderID(id uint) OptionFunc {
+func WithProviderID(id uint32) OptionFunc {
 	return func(opts *option) error {
-		opts.providerID = new(uint)
+		opts.providerID = new(uint32)
 		*opts.providerID = id
 		return nil
 	}
@@ -134,12 +134,13 @@ func NewScrypt(opts ...OptionFunc) (*Scrypt, error) {
 		return nil, err
 	}
 
+	if *options.providerID != cCPUProviderID() {
+		gpuMtx.Lock()
+	}
 	init, err := cNewInitializer(options)
 	if err != nil {
+		gpuMtx.Unlock()
 		return nil, err
-	}
-	if *options.providerID != cCPUProviderID() {
-		gpuMtx.Device(*options.providerID).Lock()
 	}
 
 	return &Scrypt{
@@ -156,7 +157,7 @@ func (s *Scrypt) Close() error {
 
 	cFreeInitializer(s.init)
 	if *s.options.providerID != cCPUProviderID() {
-		gpuMtx.Device(*s.options.providerID).Unlock()
+		gpuMtx.Unlock()
 	}
 	s.init = nil
 	return nil
