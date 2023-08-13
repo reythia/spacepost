@@ -398,7 +398,8 @@ func (init *Initializer) Initialize(ctx context.Context) error {
 
 func removeRedundantFiles(cfg config.Config, opts config.InitOpts, logger *zap.Logger) error {
 
-	return fmt.Errorf("REFUSED TO DELETE POSTDATA FILES! (%v)", opts.DataDir)
+	logger.Debug("REFUSED TO DELETE POSTDATA FILES!")
+	return nil
 	
 	// Go over all postdata_N.bin files in the data directory and remove the ones that are not needed.
 	// The files with indices from 0 to init.opts.TotalFiles(init.cfg.LabelsPerUnit) - 1 are preserved.
